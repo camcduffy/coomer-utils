@@ -48,26 +48,6 @@ class CKUtils:
         #print(request_url)
         response = requests.get(request_url, cookies={'session': self.__session_token})
         return response.content
-
-    # Check API
-    def check_API(self, uri):
-        request_url = "https://" + self.__site + uri
-        #print(request_url)
-        
-        nbTries = 0
-        
-        while nbTries < 3:
-            response = requests.head(request_url)
-            if response.status_code == 200:
-                return request_url
-            elif response.status_code == 302:
-                return ''
-            else:
-                nbTries += 1
-                
-            time.sleep(3)
-            
-        return str(response.status_code)
             
     # Get API version
     def get_API_version(self):
@@ -233,6 +213,28 @@ class CKUtils:
                 
         return file_list
 
+    # Check API
+    def __check_user_exists(self, user):
+        request_url = "https://" + self.__site + '/api/v1/' + self.__service + '/user/' + user + '/profile'
+        #print(request_url)
+        
+        nbTries = 0
+        
+        while nbTries < 3:
+            response = requests.head(request_url)
+            response = requests.get(request_url)
+
+            if response.status_code == 200:
+                return True
+            elif response.status_code == 404:
+                return False
+            else:
+                nbTries += 1
+                
+            time.sleep(3)
+            
+        return False
+
 
     # Display user's files.
     # Arguments :
@@ -342,7 +344,7 @@ class CKUtils:
                             if nb_checks_without_file_modification > 3:
                                 task_successfully_completed = False
                                 executor.shutdown(wait=False)
-                        
+
                         if task_successfully_completed:
                             # It's OK, the file has been downloaded, stop retrying
                             download_completed = True
@@ -381,7 +383,10 @@ class CKUtils:
         for collab in sorted(set(collabs)):
             collab = collab[1:]
             # Check if collab is reachable
-            result = self.check_API('/' + self.__service + '/user/' + collab)
+            if self.__check_user_exists(collab):
+                result = 'https://' + self.__site + '/' + self.__service + '/user/' + collab
+            else:
+                result = ''
             
             print(collab + " : " + result)
              
