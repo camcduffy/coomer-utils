@@ -269,8 +269,13 @@ class CKUtils:
     def download_user_files(self, user_id, file_type=None, from_date=None, to_date=None, from_post_id=None, to_post_id=None, overwrite_file=False, reverse_order=False):
         file_list = self.__get_user_files(user_id, file_type, from_date, to_date, from_post_id, to_post_id, get_size=False, reverse_order=reverse_order)
         progress_bar = None
+        current_file_size = 0
+        
         print(len(file_list))
         def download_progress_hook(count, block_size, total_size):
+            nonlocal current_file_size
+            current_file_size = total_size
+            
             data_downloaded = count * block_size
             if data_downloaded > total_size:
                 data_downloaded = total_size
@@ -293,12 +298,17 @@ class CKUtils:
         
         
         for file in file_list:
-            directory_name = file["published"] + "-" + file["post_title"]
-            os.makedirs(user_id + "/" + directory_name, exist_ok = True)
-            file_name = user_id + "/" + directory_name + "/" + file["name"]
+            # directory_name = file["published"] + "-" + file["post_title"]
+            directory_name = user_id + "/" + file["post_title"]
+            os.makedirs(directory_name, exist_ok = True)
+            file_name = directory_name + "/" + file["name"]
             
             if not overwrite_file and os.path.isfile(file_name):
                 print("Download skipped, file already exists :'" + file_name + "'")
+                # Set file modification time to the publication date
+                published = datetime.strptime(file["published"], '%Y-%m-%dT%H:%M:%S')
+                os.utime(file_name, (published.timestamp(), published.timestamp()))
+                os.utime(directory_name, (published.timestamp(), published.timestamp()))
             else:
                 nb_download_retries = 0
                 download_completed = False
@@ -345,7 +355,9 @@ class CKUtils:
                                 task_successfully_completed = False
                                 executor.shutdown(wait=False)
 
-                        if task_successfully_completed:
+                        downloaded_file_size = os.path.getsize(file_name)
+
+                        if task_successfully_completed and downloaded_file_size == current_file_size:
                             # It's OK, the file has been downloaded, stop retrying
                             download_completed = True
                         else:
@@ -357,6 +369,12 @@ class CKUtils:
                 if not download_completed:
                     print('Network issues, exit !')
                     sys.exit(2)
+                else:
+                    # Set file modification time to the publication date
+                    published = datetime.strptime(file["published"], '%Y-%m-%dT%H:%M:%S')
+                    os.utime(file_name, (published.timestamp(), published.timestamp()))
+                    os.utime(directory_name, (published.timestamp(), published.timestamp()))
+                    
             
     # Display user collabs.
     # Arguments :
