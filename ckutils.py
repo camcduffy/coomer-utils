@@ -1,8 +1,6 @@
 import getpass
 import requests
-import urllib.request
-from urllib.request import urlretrieve
-from progressbar import ProgressBar, Percentage, Bar, AdaptiveETA, DataSize, FileTransferSpeed
+import urllib3
 import shutil
 import re
 import sys
@@ -12,11 +10,13 @@ import ssl
 from datetime import date
 from datetime import datetime
 from datetime import timedelta
+from importlib import reload 
 import time
 import argparse
 from enum import Enum
 import signal
 from concurrent.futures import ThreadPoolExecutor
+from tqdm import tqdm
 
 class CKUtils:
     # Constructor
@@ -93,12 +93,14 @@ class CKUtils:
     def __get_post_title(self, post):
         post_title = post["title"]
         
+        # Suppress special characters (transform / in -)
+        post_title = re.sub("[^A-Za-z0-9 '-_]+", '', re.sub("/", "-", post_title))
+        
         # If post title is empty, use post ID
         if post_title == None or post_title == "":
             post_title = post["id"]
-        
-        # Suppress special characters (transform / in -)
-        return re.sub("[^A-Za-z0-9 '-_]+", '', re.sub("/", "-", post_title))
+
+        return post_title
 
     # Get post files
     def __get_post_files(self, post):
@@ -258,7 +260,7 @@ class CKUtils:
             
         if display_size:
             print("Total size:" + str(total_size))
-            
+                                 
     # Download user's files.
     # Arguments :
     # - user_id : user ID
@@ -266,37 +268,17 @@ class CKUtils:
     # - from_date : list from this date (all posts if omitted)
     # - from_post_id : list from post ID (all posts if omitted)
     # - overwrite_file : if false, do not download if file already exists.
-    def download_user_files(self, user_id, file_type=None, from_date=None, to_date=None, from_post_id=None, to_post_id=None, overwrite_file=False, reverse_order=False):
-        file_list = self.__get_user_files(user_id, file_type, from_date, to_date, from_post_id, to_post_id, get_size=False, reverse_order=reverse_order)
-        progress_bar = None
-        current_file_size = 0
+    def download_user_files(self, user_id, file_type=None, from_date=None, to_date=None, from_post_id=None, to_post_id=None, overwrite_file=False, reverse_order=False, quiet=False):
+        file_list = self.__get_user_files(user_id, file_type, from_date, to_date, from_post_id, to_post_id, get_size=False, reverse_order=reverse_order)      
         
-        print(len(file_list))
-        def download_progress_hook(count, block_size, total_size):
-            nonlocal current_file_size
-            current_file_size = total_size
-            
-            data_downloaded = count * block_size
-            if data_downloaded > total_size:
-                data_downloaded = total_size
-            
-            nonlocal progress_bar
-            if progress_bar.widgets[1] == "##":
-                progress_bar.max_value = total_size
-                progress_bar.widgets[1]= DataSize(format='%(scaled)5.1f %(prefix)s%(unit)s/' + '{:5.1f}'.format(float(total_size)/(1024.0*1024.0)) + ' MiB')
-                
-            progress_bar.update(data_downloaded)
-        
-        def download_file():
-            print("Downloading " + file_name)
-            
-            nonlocal progress_bar
-            progress_bar = ProgressBar(term_width=100, widgets=["\t", "##","|",Percentage(), Bar(), AdaptiveETA(),"|",FileTransferSpeed()])
-            progress_bar.start()
-            urlretrieve(file["full_path"], file_name, reporthook=download_progress_hook)
-            progress_bar.finish()
-        
-        
+        common_user_agents = ["Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+                              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+                              "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0",
+                              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0"
+                             ]
+                             
         for file in file_list:
             # directory_name = file["published"] + "-" + file["post_title"]
             directory_name = user_id + "/" + file["post_title"]
@@ -304,7 +286,8 @@ class CKUtils:
             file_name = directory_name + "/" + file["name"]
             
             if not overwrite_file and os.path.isfile(file_name):
-                print("Download skipped, file already exists :'" + file_name + "'")
+                if not quiet:
+                   print("Download skipped, file already exists :'" + file_name + "'")
                 # Set file modification time to the publication date
                 published = datetime.strptime(file["published"], '%Y-%m-%dT%H:%M:%S')
                 os.utime(file_name, (published.timestamp(), published.timestamp()))
@@ -312,70 +295,62 @@ class CKUtils:
             else:
                 nb_download_retries = 0
                 download_completed = False
-                # Try to download a file three times then abort
+                file_name_tmp = file_name + ".tmp"
                 
-                while nb_download_retries < 3 and not download_completed:
-                    try:
-                        if nb_download_retries != 0:
-                            print('Download issue, try for the ' + str(nb_download_retries) + ' time')
-                        # Initialize file modification time with current time
-                        file_last_modification_time = time.time()
-                        # Remove file if not first try
-                        if nb_download_retries != 0:
-                            try:
-                                os.remove(file_name)
-                            except OSError:
-                                pass
-                                                
-                        # Launch file download
-                        executor = ThreadPoolExecutor(max_workers=1)
-                        download_task = executor.submit(download_file)
-                        
-                        nb_checks_without_file_modification = 0
-                        task_successfully_completed = True
-                        
-                        while download_task.running():
-                            # Wait 2 seconds and check if file has been modified
-                            time.sleep(10)
-                            
-                            if os.path.exists(file_name):
-                                file_current_modification_time = os.path.getctime(file_name)
-                            else:
-                                file_current_modification_time = file_last_modification_time
-                            
-                            if file_current_modification_time == file_last_modification_time:
-                                nb_checks_without_file_modification += 1
-                                #print('no modification : ' + str(nb_checks_without_file_modification))
-                            else:
-                                file_last_modification_time = file_current_modification_time
-                                nb_checks_without_file_modification = 0
-                                
-                            # After n checks without modification, interrupt the downloading
-                            if nb_checks_without_file_modification > 3:
-                                task_successfully_completed = False
-                                executor.shutdown(wait=False)
-
-                        downloaded_file_size = os.path.getsize(file_name)
-
-                        if task_successfully_completed and downloaded_file_size == current_file_size:
-                            # It's OK, the file has been downloaded, stop retrying
-                            download_completed = True
+                while nb_download_retries < 100 and not download_completed:
+                    try:                                            
+                        if os.path.isfile(file_name_tmp):
+                            already_downloaded = os.path.getsize(file_name_tmp)                       
+                            file_access = "ab"
+                            headers = {"Range" : "bytes=" + str(already_downloaded) + "-"}
                         else:
-                            # Try again
-                            nb_download_retries += 1
-                    except Exception as e:
-                        print(e)
+                            already_downloaded = 0
+                            file_access = "wb"
+                            headers = {}
+                        
+                        session = requests.session()
+                        response = session.request('HEAD', file["full_path"])
+                        total_size = int(response.headers.get('content-length', 0))
+                        session.close()
+                        
+                        session = requests.session()
+                        response = session.get(file["full_path"], stream=True, allow_redirects=True, headers=headers, timeout=60)
+			
+                        with open(file_name_tmp, file_access) as file_object, tqdm(
+                            desc=file_name,
+                            total=total_size,
+                            unit='B',
+                            unit_scale=True,
+                            unit_divisor=1024,
+                            initial=already_downloaded
+                        ) as bar:
+                            for data in response.iter_content(chunk_size=1024):
+                               size = file_object.write(data)
+                               bar.update(size)
+                               
+                        download_completed = True
+                        os.rename(file_name_tmp, file_name)      
+                        
+                    except (requests.exceptions.ChunkedEncodingError, urllib3.exceptions.ReadTimeoutError,
+                            requests.exceptions.ConnectionError,requests.exceptions.ReadTimeout) as e:
+                        if nb_download_retries != 100:
+                           nb_download_retries += 1
+                           print("Try again from bytes already downloaded : " + str(nb_download_retries)) 
+                           session = requests.session()
+                           sys.exit(3)      
+                                       
                         
                 if not download_completed:
-                    print('Network issues, exit !')
+                    print()
+                    print('Abort file download!')
+                    
                     sys.exit(2)
                 else:
                     # Set file modification time to the publication date
                     published = datetime.strptime(file["published"], '%Y-%m-%dT%H:%M:%S')
                     os.utime(file_name, (published.timestamp(), published.timestamp()))
                     os.utime(directory_name, (published.timestamp(), published.timestamp()))
-                    
-            
+                                
     # Display user collabs.
     # Arguments :
     # - user_id : user ID
@@ -465,6 +440,7 @@ parser.add_argument("-fd", "--from-date", type=lambda d: datetime.strptime(d, '%
 parser.add_argument("-td", "--to-date", type=lambda d: datetime.strptime(d, '%Y/%m/%d %H:%M:%S'), help="Date format : 'YYYY/MM/DD hh:mm:ss'")
 parser.add_argument("-fpi", "--from-post-id")
 parser.add_argument("-tpi", "--to-post-id")
+parser.add_argument("-q", "--quiet", action='store_true', help='Do not display informative messages like "already downloaded"')
 parser.add_argument("-owf", "--overwrite-file", action='store_true', help='Overwrite existing files during download')
 parser.add_argument("-sfs", "--show-file-size", action='store_true', help='Show file size when executing command list-files (very slow)')
 parser.add_argument("-ro", "--reverse-order", action='store_true', help='List/download from the oldest file (default is latest file)')
@@ -488,7 +464,7 @@ if args.action == "list-files":
 
 elif args.action == "download-files":
     ckutils.download_user_files(user_id=args.user_id, file_type=args.file_type, from_date=args.from_date, to_date=args.to_date,
-                                from_post_id=args.from_post_id, to_post_id=args.to_post_id, overwrite_file=args.overwrite_file, reverse_order=args.reverse_order)
+                                from_post_id=args.from_post_id, to_post_id=args.to_post_id, overwrite_file=args.overwrite_file, reverse_order=args.reverse_order, quiet=args.quiet)
     
 elif args.action == "list-links":
     ckutils.display_user_links(user_id=args.user_id)
