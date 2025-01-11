@@ -1,22 +1,17 @@
 import getpass
 import requests
 import urllib3
-import shutil
 import re
 import sys
 import json
 import os
-import ssl
-from datetime import date
 from datetime import datetime
-from datetime import timedelta
-from importlib import reload 
 import time
 import argparse
 from enum import Enum
 import signal
-from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
+import random
 
 class CKUtils:
     # Constructor
@@ -46,6 +41,7 @@ class CKUtils:
     def call_get_API(self, uri):
         request_url = "https://" + self.__site + uri
         #print(request_url)
+        
         response = requests.get(request_url, cookies={'session': self.__session_token})
         return response.content
             
@@ -123,7 +119,9 @@ class CKUtils:
     def __get_user_posts(self, user_id, from_date=None, to_date=None, from_post_id=None, to_post_id=None, reverse_order=False):
         post_offset = 0;
         post_list = []
-        
+
+      
+                      
         # Loop all the posts
         while True:
         
@@ -256,7 +254,7 @@ class CKUtils:
                 total_size += file["size"]
                 string_size = ":" + str(file["size"])
             
-            print(file["added"] + ":" + str(file["type"]) + string_size + ":" + file["post_title"] + ":" + file["full_path"])
+            print(file["published"] + ":" + str(file["type"]) + string_size + ":" + file["post_title"] + ":" + file["full_path"])
             
         if display_size:
             print("Total size:" + str(total_size))
@@ -270,18 +268,11 @@ class CKUtils:
     # - overwrite_file : if false, do not download if file already exists.
     def download_user_files(self, user_id, file_type=None, from_date=None, to_date=None, from_post_id=None, to_post_id=None, overwrite_file=False, reverse_order=False, quiet=False):
         file_list = self.__get_user_files(user_id, file_type, from_date, to_date, from_post_id, to_post_id, get_size=False, reverse_order=reverse_order)      
-        
-        common_user_agents = ["Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-                              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
-                              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-                              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
-                              "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0",
-                              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0"
-                             ]
+
                              
         for file in file_list:
             # directory_name = file["published"] + "-" + file["post_title"]
-            directory_name = user_id + "/" + file["post_title"]
+            directory_name = requests.utils.unquote(user_id) + "/" + file["post_title"]
             os.makedirs(directory_name, exist_ok = True)
             file_name = directory_name + "/" + file["name"]
             
@@ -292,6 +283,8 @@ class CKUtils:
                 published = datetime.strptime(file["published"], '%Y-%m-%dT%H:%M:%S')
                 os.utime(file_name, (published.timestamp(), published.timestamp()))
                 os.utime(directory_name, (published.timestamp(), published.timestamp()))
+            elif os.path.isfile(file_name + ".incomplete"):
+                print("Download skipped, file incomplete :'" + file_name + "'")
             else:
                 nb_download_retries = 0
                 download_completed = False
@@ -307,45 +300,46 @@ class CKUtils:
                             already_downloaded = 0
                             file_access = "wb"
                             headers = {}
-                        
-                        session = requests.session()
-                        response = session.request('HEAD', file["full_path"])
+
+                        response = requests.request('HEAD', file["full_path"])
                         total_size = int(response.headers.get('content-length', 0))
-                        session.close()
                         
-                        session = requests.session()
-                        response = session.get(file["full_path"], stream=True, allow_redirects=True, headers=headers, timeout=60)
+                        with requests.get(file["full_path"], stream=True, headers=headers) as response:
 			
-                        with open(file_name_tmp, file_access) as file_object, tqdm(
-                            desc=file_name,
-                            total=total_size,
-                            unit='B',
-                            unit_scale=True,
-                            unit_divisor=1024,
-                            initial=already_downloaded
-                        ) as bar:
-                            for data in response.iter_content(chunk_size=1024):
-                               size = file_object.write(data)
-                               bar.update(size)
-                               
-                        download_completed = True
-                        os.rename(file_name_tmp, file_name)      
+                           with open(file_name_tmp, file_access) as file_object, tqdm(
+                               desc=file_name,
+                               total=total_size,
+                               unit='B',
+                               unit_scale=True,
+                               unit_divisor=1024,
+                               initial=already_downloaded
+                           ) as bar:
+                               for data in response.iter_content(chunk_size=1024):
+                                  size = file_object.write(data)
+                                  bar.update(size)
+                        
+                        already_downloaded = os.path.getsize(file_name_tmp)
+                        if already_downloaded < total_size:
+                           print("Not Fully downloaded!")
+                           nb_download_retries = 101
+                           os.rename(file_name_tmp, file_name + ".incomplete")
+                        else:   
+                           download_completed = True
+                           os.rename(file_name_tmp, file_name)      
                         
                     except (requests.exceptions.ChunkedEncodingError, urllib3.exceptions.ReadTimeoutError,
                             requests.exceptions.ConnectionError,requests.exceptions.ReadTimeout) as e:
+                        #print("Time Out! (" + type(e).__name__ + ")")
+                        print("Time Out!")
+                        sys.exit(3)
+                             
                         if nb_download_retries != 100:
                            nb_download_retries += 1
                            print("Try again from bytes already downloaded : " + str(nb_download_retries)) 
-                           session = requests.session()
-                           sys.exit(3)      
-                                       
-                        
-                if not download_completed:
-                    print()
-                    print('Abort file download!')
-                    
-                    sys.exit(2)
-                else:
+                               
+
+
+                if download_completed:
                     # Set file modification time to the publication date
                     published = datetime.strptime(file["published"], '%Y-%m-%dT%H:%M:%S')
                     os.utime(file_name, (published.timestamp(), published.timestamp()))
