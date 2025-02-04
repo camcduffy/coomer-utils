@@ -1,6 +1,5 @@
 import getpass
 import requests
-import urllib3
 import re
 import sys
 import json
@@ -11,7 +10,7 @@ import argparse
 from enum import Enum
 import signal
 from tqdm import tqdm
-import random
+
 
 class CKUtils:
     # Constructor
@@ -260,7 +259,6 @@ class CKUtils:
             print("Total size:" + str(total_size))
                                  
     # Download user's files.
-    # Arguments :
     # - user_id : user ID
     # - file_type : File_type (all if omitted)
     # - from_date : list from this date (all posts if omitted)
@@ -275,16 +273,20 @@ class CKUtils:
             directory_name = requests.utils.unquote(user_id) + "/" + file["post_title"]
             os.makedirs(directory_name, exist_ok = True)
             file_name = directory_name + "/" + file["name"]
+            published = datetime.strptime(file["published"], '%Y-%m-%dT%H:%M:%S')
             
             if not overwrite_file and os.path.isfile(file_name):
                 if not quiet:
                    print("Download skipped, file already exists :'" + file_name + "'")
                 # Set file modification time to the publication date
-                published = datetime.strptime(file["published"], '%Y-%m-%dT%H:%M:%S')
                 os.utime(file_name, (published.timestamp(), published.timestamp()))
                 os.utime(directory_name, (published.timestamp(), published.timestamp()))
             elif os.path.isfile(file_name + ".incomplete"):
                 print("Download skipped, file incomplete :'" + file_name + "'")
+            elif os.path.isfile(file_name + ".ignore"):
+                if not quiet:
+                    print("Download skipped, file ignored :'" + file_name + "'")
+                os.utime(directory_name, (published.timestamp(), published.timestamp()))
             else:
                 nb_download_retries = 0
                 download_completed = False
@@ -327,10 +329,9 @@ class CKUtils:
                            download_completed = True
                            os.rename(file_name_tmp, file_name)      
                         
-                    except (requests.exceptions.ChunkedEncodingError, urllib3.exceptions.ReadTimeoutError,
-                            requests.exceptions.ConnectionError,requests.exceptions.ReadTimeout) as e:
-                        #print("Time Out! (" + type(e).__name__ + ")")
-                        print("Time Out!")
+                    except (requests.exceptions.RequestException) as e:
+                        print("Time Out! (" + type(e).__name__ + ")")
+                        #print("Time Out!")
                         sys.exit(3)
                              
                         if nb_download_retries != 100:
@@ -341,7 +342,6 @@ class CKUtils:
 
                 if download_completed:
                     # Set file modification time to the publication date
-                    published = datetime.strptime(file["published"], '%Y-%m-%dT%H:%M:%S')
                     os.utime(file_name, (published.timestamp(), published.timestamp()))
                     os.utime(directory_name, (published.timestamp(), published.timestamp()))
                                 
