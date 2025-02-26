@@ -33,8 +33,8 @@ class CKUtils:
             if response.status_code == 200:
                 self.__session_token = re.sub(r'.*session=([^;]*).*', r'\1', response.headers["Set-Cookie"])
             else:
-                print("Error : " + str(response.status_code))
-                print(response.reason)
+                print("HTTP Error : " + response.reason + " (" + str(response.status_code) + ")")
+                print("Functional error : " + response.json()['error'])
                 sys.exit(2)
 
     # Call API
@@ -63,21 +63,24 @@ class CKUtils:
         def __str__(self):
             return self.value
 
-    FAVORITES = "--FAVORITES--"
+    FAVORITES = "myFavoritePosts"
 
     # Get file type
     def __get_file_type(self, file):
-        file_name = file["name"]
-        if file_name.lower().endswith(".m4v") or file_name.lower().endswith(".mp4"):
+        file_extension = os.path.splitext(file["name"].lower())[1]
+
+        if file_extension in [".m4v", ".mp4"]:
             return CKUtils.File_type.VIDEO
-        elif file_name.lower().endswith(".jpg") or file_name.lower().endswith(".jpeg") or \
-             file_name.lower().endswith(".png") or file_name.lower().endswith(".gif"):
+
+        elif file_extension in [".jpg", ".jpeg", ".png", ".gif"]:
             return CKUtils.File_type.IMAGE
-        elif file_name.lower().endswith(".rar") or file_name.lower().endswith(".zip") or \
-             file_name.lower().endswith(".7z"):
+
+        elif file_extension in [".rar", ".zip", ".7z"]:
             return CKUtils.File_type.ARCHIVE
-        elif file_name.lower().endswith(".pdf"):
+
+        elif file_extension in [".pdf"]:
             return CKUtils.File_type.DOCUMENT
+
         else:
             return CKUtils.File_type.OTHER
 
@@ -431,6 +434,8 @@ source_group = parser.add_mutually_exclusive_group(required=True)
 source_group.add_argument("-u", "--user-id", help="service user ID")
 source_group.add_argument("-f", "--favorites", help='favorite posts', action='store_true')
 
+parser.add_argument("-c", "--credentials", default=None, type=lambda c: c.split(':'), help="Site credentials format : username:password")
+
 parser.add_argument("-s", "--service", default="onlyfans", help="Default : onlyfans")
 parser.add_argument("-a", "--action", required=True, choices=['download-files', 'list-files', 'list-collabs', 'list-links'])
 parser.add_argument("-ft", "--file-type", choices=list(CKUtils.File_type), type=CKUtils.File_type)
@@ -451,8 +456,13 @@ password= ""
 if args.favorites:
     args.user_id = CKUtils.FAVORITES
     
-    username = input('Enter your user name:')
-    password = getpass.getpass(prompt="Enter your password:")
+    if args.credentials and len(args.credentials) == 2:
+        username = args.credentials[0]
+        password = args.credentials[1]
+
+    if not username and not password:
+        username = input('Enter your user name:')
+        password = getpass.getpass(prompt="Enter your password:")
     
 ckutils = CKUtils(args.web_site, args.service, username, password)
     
