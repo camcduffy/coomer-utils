@@ -25,15 +25,16 @@ class CKUtils:
         
         if username != "" and password != "":
             # Get a session token
-            credentialsData = "username=" + username + "&password=" + password
-            headers = {"Content-type" : "application/x-www-form-urlencoded"}
+            credentialsData = {"username": username,"password": password}
+            headers = {"accept" : "application/json", "Content-Type" : "application/json"}
 
-            response = requests.post("https://" + site + "/account/login", data=credentialsData, allow_redirects=False, headers=headers)
+            response = requests.post("https://" + site + "/api/v1/authentication/login", json=credentialsData, headers=headers)
 
-            if response.status_code == 302:
+            if response.status_code == 200:
                 self.__session_token = re.sub(r'.*session=([^;]*).*', r'\1', response.headers["Set-Cookie"])
             else:
                 print("Error : " + str(response.status_code))
+                print(response.reason)
                 sys.exit(2)
 
     # Call API
@@ -281,8 +282,7 @@ class CKUtils:
                 # Set file modification time to the publication date
                 os.utime(file_name, (published.timestamp(), published.timestamp()))
                 os.utime(directory_name, (published.timestamp(), published.timestamp()))
-            elif os.path.isfile(file_name + ".incomplete"):
-                print("Download skipped, file incomplete :'" + file_name + "'")
+
             elif os.path.isfile(file_name + ".ignore"):
                 if not quiet:
                     print("Download skipped, file ignored :'" + file_name + "'")
@@ -303,8 +303,13 @@ class CKUtils:
                             file_access = "wb"
                             headers = {}
 
-                        response = requests.request('HEAD', file["full_path"])
-                        total_size = int(response.headers.get('content-length', 0))
+                        try:
+                            response = requests.request('HEAD', file["full_path"])
+                            total_size = int(response.headers.get('content-length', 0))
+                        except (requests.exceptions.ConnectionError) as e:
+                            print("Connection error, skip file '" + file_name + "'")
+                            nb_download_retries=100
+                            continue
                         
                         with requests.get(file["full_path"], stream=True, headers=headers) as response:
 			
@@ -323,8 +328,7 @@ class CKUtils:
                         already_downloaded = os.path.getsize(file_name_tmp)
                         if already_downloaded < total_size:
                            print("Not Fully downloaded!")
-                           nb_download_retries = 101
-                           os.rename(file_name_tmp, file_name + ".incomplete")
+                           sys.exit(3)
                         else:   
                            download_completed = True
                            os.rename(file_name_tmp, file_name)      
@@ -332,7 +336,7 @@ class CKUtils:
                     except (requests.exceptions.RequestException) as e:
                         print("Time Out! (" + type(e).__name__ + ")")
                         #print("Time Out!")
-                        sys.exit(3)
+                        sys.exit(4)
                              
                         if nb_download_retries != 100:
                            nb_download_retries += 1
@@ -398,11 +402,11 @@ class CKUtils:
             print(link)
 
 # Catch Ctrl-C
-#def signal_handler(signum, frame):  
-#    print("Program stopped")
-#    sys.exit(1)
+def signal_handler(signum, frame):
+    print("Program stopped")
+    sys.exit(100)
     
-#signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGINT, signal_handler)
 
 # Command arguments : 
 # - -w/--web_site : web site, required
