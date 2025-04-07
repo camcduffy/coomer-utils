@@ -34,7 +34,9 @@ class CKUtils:
                 self.__session_token = re.sub(r'.*session=([^;]*).*', r'\1', response.headers["Set-Cookie"])
             else:
                 print("HTTP Error : " + response.reason + " (" + str(response.status_code) + ")")
-                print("Functional error : " + response.json()['error'])
+                if response.json() and 'error' in response.json():
+                    print("Functional error : " + response.json()['error'])
+
                 sys.exit(2)
 
     # Call API
@@ -54,14 +56,35 @@ class CKUtils:
         return response.text
 
     class File_type(Enum):
-        VIDEO = "video"
-        IMAGE = "image"
-        ARCHIVE = "archive"
-        DOCUMENT = "document"
-        OTHER = "other"
+        VIDEO    = {"type": "video",    "extensions": [".m4v", ".mp4"]}
+        IMAGE    = {"type": "image",    "extensions": [".jpg", ".jpeg", ".png", ".gif"]}
+        ARCHIVE  = {"type": "archive",  "extensions": [".rar", ".zip", ".7z"]}
+        DOCUMENT = {"type": "document", "extensions": [".pdf"]}
+        OTHER    = {"type": "other",    "extensions": []}
         
         def __str__(self):
-            return self.value
+            return self.value['type']
+
+        @classmethod
+        def _missing_(cls, label):
+            for file_type in CKUtils.File_type:
+                if label == file_type.value['type']:
+                    return file_type
+
+            return label
+
+        @staticmethod
+        def list():
+            return list(map(lambda c: c.value['type'], CKUtils.File_type))
+
+        @staticmethod
+        def from_str(label):
+            for file_type in CKUtils.File_type:
+                if label == file_type.value['type']:
+                    return file_type
+
+            return label
+
 
     FAVORITES = "myFavoritePosts"
 
@@ -69,20 +92,11 @@ class CKUtils:
     def __get_file_type(self, file):
         file_extension = os.path.splitext(file["name"].lower())[1]
 
-        if file_extension in [".m4v", ".mp4"]:
-            return CKUtils.File_type.VIDEO
+        for file_type in CKUtils.File_type:
+            if file_extension in file_type.value['extensions']:
+                return file_type
 
-        elif file_extension in [".jpg", ".jpeg", ".png", ".gif"]:
-            return CKUtils.File_type.IMAGE
-
-        elif file_extension in [".rar", ".zip", ".7z"]:
-            return CKUtils.File_type.ARCHIVE
-
-        elif file_extension in [".pdf"]:
-            return CKUtils.File_type.DOCUMENT
-
-        else:
-            return CKUtils.File_type.OTHER
+        return CKUtils.File_type.OTHER
 
     # Get file full path
     def __get_file_full_path(self, file):
@@ -363,12 +377,12 @@ class CKUtils:
         collabs = []
         for post in post_list:
             post_content = post["content"]
-            post_collabs = re.findall(r'@[a-zA-Z0-9_]*', post_content)
+            post_collabs = re.findall(r'@[a-zA-Z0-9_\-\.]*', post_content)
             for collab in post_collabs:
                 collab = collab.lower()
                 collabs.append(collab)
                 
-            post_collabs = re.findall(r'https://onlyfans.com/[/a-zA-Z0-9_]*', post_content)
+            post_collabs = re.findall(r'https://onlyfans.com/[/a-zA-Z0-9_\-\.]*', post_content)
             for collab in post_collabs:
                 collab = collab.lower()
                 collab = re.sub(r'https://onlyfans.com/[0-9/]*','', collab)
@@ -438,7 +452,7 @@ parser.add_argument("-c", "--credentials", default=None, type=lambda c: c.split(
 
 parser.add_argument("-s", "--service", default="onlyfans", help="Default : onlyfans")
 parser.add_argument("-a", "--action", required=True, choices=['download-files', 'list-files', 'list-collabs', 'list-links'])
-parser.add_argument("-ft", "--file-type", choices=list(CKUtils.File_type), type=CKUtils.File_type)
+parser.add_argument("-ft", "--file-type", choices=list(CKUtils.File_type), type=CKUtils.File_type.from_str)
 parser.add_argument("-fd", "--from-date", type=lambda d: datetime.strptime(d, '%Y/%m/%d %H:%M:%S'), help="Date format : 'YYYY/MM/DD hh:mm:ss'")
 parser.add_argument("-td", "--to-date", type=lambda d: datetime.strptime(d, '%Y/%m/%d %H:%M:%S'), help="Date format : 'YYYY/MM/DD hh:mm:ss'")
 parser.add_argument("-fpi", "--from-post-id")
@@ -460,7 +474,7 @@ if args.favorites:
         username = args.credentials[0]
         password = args.credentials[1]
 
-    if not username and not password:
+    if not username or not password:
         username = input('Enter your user name:')
         password = getpass.getpass(prompt="Enter your password:")
     
