@@ -377,19 +377,20 @@ class CKUtils:
         collabs = []
         for post in post_list:
             post_content = post["content"]
-            post_collabs = re.findall(r'@[a-zA-Z0-9_\-\.]*', post_content)
+
+            post_collabs = re.findall(r'@[a-zA-Z0-9_\-\.]*', post_content) + \
+                           re.findall(r'https://onlyfans.com/[/a-zA-Z0-9_\-\.]*', post_content)
+
             for collab in post_collabs:
                 collab = collab.lower()
+                # suppress last character if it's a special one
+                if collab[-1] in ['.', '-']:
+                    collab = collab[:-1]
                 collabs.append(collab)
-                
-            post_collabs = re.findall(r'https://onlyfans.com/[/a-zA-Z0-9_\-\.]*', post_content)
-            for collab in post_collabs:
-                collab = collab.lower()
-                collab = re.sub(r'https://onlyfans.com/[0-9/]*','', collab)
-                collabs.append("@" + collab)
-            
+
         for collab in sorted(set(collabs)):
             collab = collab[1:]
+
             # Check if collab is reachable
             if self.__check_user_exists(collab):
                 result = 'https://' + self.__site + '/' + self.__service + '/user/' + collab
