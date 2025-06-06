@@ -126,6 +126,11 @@ class CKUtils:
             
         return post_files
 
+    # Get user name
+    def __get_user_name(self, user_id):
+        profile = json.loads(ckutils.call_get_API("/api/v1/" + self.__service + "/user/" + user_id + "/profile"))
+        return profile["name"]
+
     # Get user's post
     # Arguments :
     # - user_id : user ID
@@ -216,6 +221,7 @@ class CKUtils:
                 file_info["post_title"] = post_title
                 file_info["added"] = post["added"]
                 file_info["published"] = post["published"]
+                file_info["type"] = post_file_type
                 
                 # Get file size
                 if get_size:
@@ -283,12 +289,23 @@ class CKUtils:
     # - from_post_id : list from post ID (all posts if omitted)
     # - overwrite_file : if false, do not download if file already exists.
     def download_user_files(self, user_id, file_type=None, from_date=None, to_date=None, from_post_id=None, to_post_id=None, overwrite_file=False, reverse_order=False, quiet=False):
-        file_list = self.__get_user_files(user_id, file_type, from_date, to_date, from_post_id, to_post_id, get_size=False, reverse_order=reverse_order)      
+        file_list = self.__get_user_files(user_id, file_type, from_date, to_date, from_post_id, to_post_id, get_size=False, reverse_order=reverse_order)
+        user_name = self.__get_user_name(user_id)
 
-                             
+        # Details
+        nb_files_per_type = {}
+        for file in file_list:
+            if file['type'].value['type'] in nb_files_per_type:
+                nb_files_per_type[file['type'].value['type']] += 1
+            else:
+                nb_files_per_type[file['type'].value['type']] = 1
+
+        for nb_files in nb_files_per_type:
+            print("Nb " + nb_files + "(s) : " + str(nb_files_per_type[nb_files]))
+
         for file in file_list:
             # directory_name = file["published"] + "-" + file["post_title"]
-            directory_name = requests.utils.unquote(user_id) + "/" + file["post_title"]
+            directory_name = requests.utils.unquote(user_name) + "/" + file["post_title"]
             os.makedirs(directory_name, exist_ok = True)
             file_name = directory_name + "/" + file["name"]
             published = datetime.strptime(file["published"], '%Y-%m-%dT%H:%M:%S')
@@ -322,14 +339,29 @@ class CKUtils:
 
                         try:
                             response = requests.request('HEAD', file["full_path"])
+
+                            server = response.headers.get('Server')
+
+                            if server == 'ddos-guard':
+                                print("DDOS detection, skip file '" + file_name + "'")
+                                nb_download_retries=100
+                                continue
+
+                            if response.status_code != 200:
+                                print("HTTP error " + str(response.status_code) + ", skip file '" + file_name + "'")
+                                nb_download_retries=100
+                                continue
+
                             total_size = int(response.headers.get('content-length', 0))
+
                         except (requests.exceptions.ConnectionError) as e:
                             print("Connection error, skip file '" + file_name + "'")
                             nb_download_retries=100
                             continue
                         
+
+
                         with requests.get(file["full_path"], stream=True, headers=headers) as response:
-			
                            with open(file_name_tmp, file_access) as file_object, tqdm(
                                desc=file_name,
                                total=total_size,
@@ -345,7 +377,9 @@ class CKUtils:
                         already_downloaded = os.path.getsize(file_name_tmp)
                         if already_downloaded < total_size:
                            print("Not Fully downloaded!")
-                           sys.exit(3)
+                           #sys.exit(3)
+                           nb_download_retries=100
+                           continue
                         else:   
                            download_completed = True
                            os.rename(file_name_tmp, file_name)      
