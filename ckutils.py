@@ -58,6 +58,7 @@ class CKUtils:
     class File_type(Enum):
         VIDEO    = {"type": "video",    "extensions": [".m4v", ".mp4"]}
         IMAGE    = {"type": "image",    "extensions": [".jpg", ".jpeg", ".png", ".gif"]}
+        SOUND    = {"type": "sound",    "extensions": [".mp3"]}
         ARCHIVE  = {"type": "archive",  "extensions": [".rar", ".zip", ".7z"]}
         DOCUMENT = {"type": "document", "extensions": [".pdf"]}
         OTHER    = {"type": "other",    "extensions": []}
@@ -129,6 +130,7 @@ class CKUtils:
     # Get user name
     def __get_user_name(self, user_id):
         profile = json.loads(ckutils.call_get_API("/api/v1/" + self.__service + "/user/" + user_id + "/profile"))
+        #print(profile)
         return profile["name"]
 
     # Get user's post
@@ -161,7 +163,11 @@ class CKUtils:
                 return post_list
                     
             for post in posts:
-                post_added_date = datetime.fromisoformat(post["added"])
+                if post["added"]:
+                    post_added_date = datetime.fromisoformat(post["added"])
+                else:
+                    post_added_date = None
+
                 post_title = self.__get_post_title(post)
                 post_id = post["id"]
                 
@@ -277,7 +283,7 @@ class CKUtils:
                 total_size += file["size"]
                 string_size = ":" + str(file["size"])
             
-            print(file["published"] + ":" + str(file["type"]) + string_size + ":" + file["post_title"] + ":" + file["full_path"])
+            print(file["published"] + ":" + str(file["type"]) + string_size + ":" + file["post_title"] + ":" + file["full_path"] + ":" + file["name"])
             
         if display_size:
             print("Total size:" + str(total_size))
@@ -500,7 +506,7 @@ parser.add_argument("-ro", "--reverse-order", action='store_true', help='List/do
 args = parser.parse_args()
 
 username = ""
-password= ""
+password = ""
 
 if args.favorites:
     args.user_id = CKUtils.FAVORITES
